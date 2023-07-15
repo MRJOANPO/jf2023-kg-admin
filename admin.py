@@ -170,47 +170,55 @@ def create_kleingruppe_view(pconnection):
             st.write("Kleingruppe wurde erstellt")
 
 def update_kleingruppe_view(pconnection):
-    kg_select_data = get_select_box_kg(pconnection)
-    selected_kleingruppe = st.sidebar.selectbox("Kleingruppe", kg_select_data.index.values, format_func=lambda x: kg_select_data.loc[x, "name"], index=0)
-    select_box_values = get_select_box_kgtn(pconnection)
-
     st.markdown("# Kleingruppe updaten")
-    kg_data = get_df_kleingruppen(pconnection)
-    kgtn_data = get_df_kgtn(pconnection)
 
-    current_kg = kg_data[kg_data["id"] == selected_kleingruppe].iloc[0,:]
+    all_kleingruppen = get_df_kleingruppen(pconnection)
+    all_anmeldungen = get_df_anmeldung(pconnection)
+    all_teilnehmer = get_df_kgtn(pconnection)
+    kg_data = get_kg_data(all_kleingruppen, all_anmeldungen)
+    tn_data = get_tn_data(all_teilnehmer, all_anmeldungen)
+    kg_data.drop([0], inplace=True)
+    selected_kleingruppe = st.sidebar.selectbox("Kleingruppe", kg_data.index, format_func=lambda x: kg_data.loc[x, "kg_display_name"], index=0)
 
+    current_kg = kg_data[kg_data.index == selected_kleingruppe].iloc[0,:]
+
+    kg_data.reset_index()
+    tn_data = pd.concat([
+        pd.DataFrame({
+            "teilnehmer_name": "---",
+            "teilnehmer_id": 0
+        }, index=[0]),
+        tn_data
+    ])
+    tn_data.reset_index(drop=True, inplace=True)
 
     with st.form("kg_update_form"):
-        if current_kg["leiter"] is None or np.isnan(current_kg["leiter"]):
-            leiter = st.selectbox("Kleingruppen Leiter", select_box_values.index.values, format_func=lambda x: select_box_values.loc[x,"Name"], index=0)
-        else:
-            leiter_index = int(kgtn_data[current_kg["leiter"]==kgtn_data["Teilnehmer"]].index[0]) + 1
-            leiter = st.selectbox("Kleingruppen Leiter", select_box_values.index.values, format_func=lambda x: select_box_values.loc[x,"Name"], index=leiter_index)
 
-        if current_kg["coleiter"] is None or np.isnan(current_kg["coleiter"]):
-            coleiter = st.selectbox("Kleingruppen Co-Leiter", select_box_values.index.values, format_func=lambda x: select_box_values.loc[x,"Name"], index=0)
-        else:
-            coleiter_index = int(kgtn_data[current_kg["coleiter"]==kgtn_data["Teilnehmer"]].index[0]) + 1
-            coleiter = st.selectbox("Kleingruppen Co-Leiter", select_box_values.index.values, format_func=lambda x: select_box_values.loc[x,"Name"], index=coleiter_index)
+        current_leiter_index = int(tn_data[tn_data["teilnehmer_id"]==current_kg["kg_leiter_id"]].index[0])
+        current_coleiter_index = int(tn_data[tn_data["teilnehmer_id"]==current_kg["kg_coleiter_id"]].index[0])
+
+        leiter_index = st.selectbox("Kleingruppen Leiter", tn_data.index.astype(int), format_func=lambda x: tn_data.loc[x,"teilnehmer_name"], index=current_leiter_index)
+        coleiter_index = st.selectbox("Kleingruppen Co-Leiter", tn_data.index.astype(int), format_func=lambda x: tn_data.loc[x,"teilnehmer_name"], index=current_coleiter_index)
+
 
         username = st.text_input("Benutzername", value=current_kg["username"])
         password = st.text_input("Passwort", value=current_kg["password"])
 
         if st.form_submit_button("Kleingruppe updaten"):
-            if leiter == 0:
+            if leiter_index == 0:
                 leiter = "NULL"
+            else:
+                leiter = int(tn_data.loc[leiter_index, "teilnehmer_id"])
 
-            if coleiter == 0:
+            if coleiter_index == 0:
                 coleiter = "NULL"
-
-            query = f"UPDATE `Kleingruppen` SET leiter={leiter}, coleiter={coleiter}, username='{username}', password='{password}' WHERE id={current_kg['id']}"
+            else:
+                coleiter = int(tn_data.loc[coleiter_index, "teilnehmer_id"])
+            query = f"UPDATE `Kleingruppen` SET leiter={leiter}, coleiter={coleiter}, username='{username}', password='{password}' WHERE id={current_kg.name}"
             cursor_update_kg = pconnection.cursor()
             cursor_update_kg.execute(query)
             pconnection.commit()
-            st.write("Kleingruppe wurde erstellt")
-
-            st.experimental_rerun()
+            st.write("Kleingruppe wurde aktualisiert")
 
 def assign_teilnehmer_to_kleingruppe_view(pconnection: mysql.connector.MySQLConnection):
     st.markdown("# Teilnehmer zuteilen")
