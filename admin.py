@@ -57,8 +57,74 @@ def get_select_box_kg(pconnection):
     select_box_values.sort_values("name", inplace=True)
     return select_box_values
 
-def display_kg(pid):
-    pass
+def get_tn_data(all_teilnehmer, all_anmeldungen):
+    tn_data = pd.DataFrame()
+    for teilnehmer in all_teilnehmer.iterrows():
+        tn_id = teilnehmer[1]["Teilnehmer"]
+        kg_id  = teilnehmer[1]["Kleingruppe"]
+        tn = all_anmeldungen[all_anmeldungen["id"] == tn_id].iloc[0,:]
+        tn_name = tn["first_name"] + " " + tn["last_name"]
+
+        current_tn_data = {
+            "teilnehmer_id": tn_id,
+            "kleingruppe_id": kg_id,
+            "teilnehmer_name": tn_name,
+            "birthday": tn["birthday"],
+            "gender": tn["gender"]
+        }
+        tn_data = pd.concat([tn_data, pd.DataFrame(current_tn_data, index=[0])])
+
+    tn_data.sort_values(["gender", "birthday"], ascending=[True, False], inplace=True)
+    tn_data.reset_index(inplace=True, drop=True)
+    return tn_data
+
+def get_kg_data(all_kleingruppen, all_anmeldungen):
+    kg_data = pd.DataFrame()
+
+    for kleingruppe in all_kleingruppen.iterrows():
+        kg_id = kleingruppe[1]["id"]
+        kg_leiter_id = kleingruppe[1]["leiter"]
+        kg_coleiter_id = kleingruppe[1]["coleiter"]
+        if (kg_leiter_id is None) or np.isnan(kg_leiter_id):
+            kg_leiter_id = 0
+            leiter_name = "<Kein Leiter>"
+        else:
+            leiter = all_anmeldungen[all_anmeldungen["id"]==kg_leiter_id].iloc[0,:]
+            leiter_name = leiter["first_name"] + " " + leiter["last_name"]
+
+        if (kg_coleiter_id is None) or np.isnan(kg_coleiter_id):
+            kg_coleiter_id = 0
+            coleiter_name = ""
+        else:
+            coleiter = all_anmeldungen[all_anmeldungen["id"]==kg_coleiter_id].iloc[0,:]
+            coleiter_name = coleiter["first_name"] + " " + coleiter["last_name"]
+
+        kg_display_name = "KG von " + leiter_name
+
+        current_kg_data = {
+            "kg_id": kg_id,
+            "kg_leiter_id": kg_leiter_id,
+            "kg_coleiter_id": kg_coleiter_id,
+            "kg_display_name": kg_display_name,
+            "kg_leiter_name": leiter_name,
+            "kg_coleiter_name": coleiter_name,
+            "username":kleingruppe[1]["username"],
+            "password":kleingruppe[1]["password"]
+        }
+        kg_data = pd.concat([kg_data, pd.DataFrame(current_kg_data, index=[0])])
+
+    kg_data.sort_values(["kg_id"], inplace=True)
+    kg_data = pd.concat([
+        pd.DataFrame({
+            "kg_id": 0,
+            "kg_leiter_id": 0,
+            "kg_display_name": "---"
+        }, index=[0]),
+        kg_data
+    ])
+
+    kg_data.set_index("kg_id", inplace=True, drop=True)
+    return kg_data
 
 ################# Views #######################
 
@@ -151,56 +217,62 @@ def assign_teilnehmer_to_kleingruppe_view(pconnection: mysql.connector.MySQLConn
     all_teilnehmer = get_df_kgtn(pconnection)
     all_kleingruppen = get_df_kleingruppen(pconnection)
     all_anmeldungen = get_df_anmeldung(pconnection)
-    all_kleingruppen
-    with st.form("assign_form") as assign_form:
-        for current_tn  in all_teilnehmer.iterrows():
+    kg_data = get_kg_data(all_kleingruppen, all_anmeldungen)
+    tn_data = get_tn_data(all_teilnehmer, all_anmeldungen)
+
+    with st.form("assign_form"):
+        for current_tn  in tn_data.iterrows():
             col1, col2 = st.columns(2)
             current_tn_values = current_tn[1]
-            tn_id = current_tn[1]["Teilnehmer"]
-            kg_id = current_tn[1]["Kleingruppe"]
-            if kg_id is None:
+            kg_id = current_tn_values["kleingruppe_id"]
+
+            if (kg_id is None) or (np.isnan(kg_id)):
                 kg_pos = 0
             else:
                 # find position in kg
-                kg_pos = 1
+                kg_pos_data = kg_data.reset_index()
+                kg_pos = int(kg_pos_data[kg_pos_data["kg_id"]==kg_id].index[0])
 
-            # st.write(tn_id)
-            tn = all_anmeldungen[all_anmeldungen["id"] == tn_id]
-            tn = tn.iloc[0,:]
-            name = "\n" + tn["first_name"] + " " +  tn["last_name"]
             col1.write(" ")
             col1.write(" ")
-            col1.write(name)
-            col2.selectbox("Kleingruppe", all_kleingruppen["id"], index=kg_pos, format_func=lambda x: all_anmeldungen[all_kleingruppen[all_kleingruppen["id"]==x].iloc[0,:]["leiter"]==all_anmeldungen["id"]].iloc[0,:]["first_name"] + " " + all_anmeldungen[all_kleingruppen[all_kleingruppen["id"]==x].iloc[0,:]["leiter"]==all_anmeldungen["id"]].iloc[0,:]["last_name"] + " Kleingruppe" , key=f"{tn_id}_kg_select")
+            col1.write(current_tn_values["teilnehmer_name"])
+            col2.selectbox("Kleingruppe", kg_data.index, index=kg_pos, format_func=lambda x: kg_data.loc[x,"kg_display_name"], key=f"{current_tn_values['teilnehmer_id']}_kg_select")
 
         if st.form_submit_button("Speichern"):
             cursor = pconnection.cursor()
-            for current_tn  in all_teilnehmer.iterrows():
-                tn_id = current_tn[1]["Teilnehmer"]
-                kg = st.session_state[f"{tn_id}_kg_select"]
-                query = f"UPDATE KGTN SET `Kleingruppe`= {kg} WHERE `Teilnehmer`={tn_id}"
+            for current_tn  in tn_data.iterrows():
+                tn_id = current_tn[1]["teilnehmer_id"]
+                kg_id = st.session_state[f"{tn_id}_kg_select"]
+                if kg_id != 0:
+                    query = f"UPDATE KGTN SET `Kleingruppe`= {kg_id} WHERE `Teilnehmer`={tn_id}"
+                else:
+                    query = f"UPDATE KGTN SET `Kleingruppe`=NULL WHERE `Teilnehmer`={tn_id}"
                 cursor.execute(query)
-                st.write(f"Updated Teilnehmer {tn_id}")
+                st.write(f"Updated Teilnehmer {current_tn[1]['teilnehmer_name']}")
 
             pconnection.commit()
 
 def kleingruppen_overview(pconnection):
-    all_anmeldungen = get_df_anmeldung(pconnection)
+
     st.markdown("# Kleingruppen Anzeigen")
-    kg_data = get_df_kleingruppen(pconnection)
-    kgtn_data = get_df_kgtn(pconnection)
+    all_teilnehmer = get_df_kgtn(pconnection)
+    all_kleingruppen = get_df_kleingruppen(pconnection)
+    all_anmeldungen = get_df_anmeldung(pconnection)
+    kg_data = get_kg_data(all_kleingruppen, all_anmeldungen)
+    tn_data = get_tn_data(all_teilnehmer, all_anmeldungen)
+    kg_data.drop([0], inplace=True)
+    kg_data.drop(columns=["kg_leiter_id", "kg_coleiter_id", "kg_display_name"], inplace=True)
+    st.dataframe(kg_data)
 
     for kg in kg_data.iterrows():
-        kg_leiter_id = kg[1]["leiter"]
-        kg_coleiter_id = kg[1]["coleiter"]
+        st.markdown(f"#### Kleingruppe von {kg[1]['kg_leiter_name']}")
+        teilnehmer = tn_data[tn_data["kleingruppe_id"] == kg[0]]
+        teilnehmer.reset_index(inplace=True)
+        for tn in teilnehmer.iterrows():
+            st.markdown(f"{tn[0]+1}. {tn[1]['teilnehmer_name']}")
 
-        if not (kg_leiter_id is None or np.isnan(kg_leiter_id)):
-            kg_data.loc[kg[0], "leiter"] = all_anmeldungen[all_anmeldungen["id"]==kg_leiter_id].iloc[0,:]["first_name"] + " " + all_anmeldungen[all_anmeldungen["id"]==kg_leiter_id].iloc[0,:]["last_name"]
-
-        if not (kg_coleiter_id is None or np.isnan(kg_coleiter_id)):
-            kg_data.loc[kg[0], "coleiter"] = all_anmeldungen[all_anmeldungen["id"]==kg_coleiter_id].iloc[0,:]["first_name"] + " " + all_anmeldungen[all_anmeldungen["id"]==kg_coleiter_id].iloc[0,:]["last_name"]
-
-    st.dataframe(kg_data)
+        if len(teilnehmer) == 0:
+            st.markdown("*noch keine Teilnehmer*")
 
 def login_view(pconnection):
     with st.form("login"):
